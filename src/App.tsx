@@ -26,6 +26,7 @@ import ExtensionServices from "./pages/ExtensionServices";
 import FinancialServices from "./pages/FinancialServices";
 import Applications from "./pages/Applications";
 import SetupOrganization from "./pages/SetupOrganization";
+import KnowledgeCenter from "./pages/KnowledgeCenter";
 
 const queryClient = new QueryClient();
 
@@ -56,6 +57,8 @@ const App = () => (
               <Route path="/financial-services" element={<FinancialServices />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/setup-organization" element={<SetupOrganization />} />
+              <Route path="/knowledge" element={<KnowledgeCenter />} />
+              <Route path="/knowledge/*" element={<KnowledgeCenter />} />
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />
             </Routes>

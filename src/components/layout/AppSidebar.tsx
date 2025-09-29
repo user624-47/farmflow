@@ -1,4 +1,4 @@
-import { 
+import {
   BarChart3, 
   Users, 
   Package, 
@@ -9,7 +9,8 @@ import {
   CloudRain,
   Droplets,
   Settings,
-  LogOut
+  LogOut,
+  BookOpen
 } from "lucide-react";
 import { NavLink, useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
@@ -166,6 +167,17 @@ export function AppSidebar() {
 
       <SidebarFooter>
         <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild>
+              <NavLink 
+                to="/knowledge" 
+                className={({ isActive }) => getNavCls({ isActive })}
+              >
+                <BookOpen className="mr-2 h-4 w-4" />
+                {state !== "collapsed" && <span>Knowledge Center</span>}
+              </NavLink>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton onClick={handleSignOut}>
               <LogOut className="mr-2 h-4 w-4" />
