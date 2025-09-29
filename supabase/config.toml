@@ -1,0 +1,4 @@
+project_id = "egmkpldulsfgbxhpjlai"
+
+[functions.ai-crop-analysis]
+verify_jwt = false

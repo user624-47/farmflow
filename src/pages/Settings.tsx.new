@@ -1,0 +1,623 @@
+import React, { useState, useEffect, useCallback } from "react";
+import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/integrations/supabase/client";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Plus, Edit, Trash2, Settings as SettingsIcon, Users, Building, UserPlus, MapPin } from "lucide-react";
+import { toast } from "@/hooks/use-toast";
+import { lazy, Suspense } from 'react';
+
+// Simple error boundary component
+class ErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean}> {
+  constructor(props: {children: React.ReactNode}) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error('Map component error:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return <div className="p-4 bg-red-50 text-red-700 rounded-md">Error loading map. Please check your Mapbox token and try again.</div>;
+    }
+
+    return this.props.children;
+  }
+}
+
+// Dynamically import the map component
+const LocationMap = lazy(() => import('@/components/maps/LocationMapBox'));
+
+interface Organization {
+  id: string;
+  name: string;
+  email: string;
+  phone?: string;
+  address?: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  subscription_plan: string;
+  subscription_status: string;
+  subscription_end: string;
+  created_at: string;
+  updated_at: string;
+  [key: string]: any;
+}
+
+interface UserRole {
+  id: string;
+  user_id: string;
+  role: string;
+  created_at: string;
+  profiles?: {
+    display_name?: string;
+  };
+}
+
+const Settings = () => {
+  const { userRole, organizationId } = useAuth();
+  const [organization, setOrganization] = useState<Organization | null>(null);
+  const [userRoles, setUserRoles] = useState<UserRole[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [isOrgDialogOpen, setIsOrgDialogOpen] = useState(false);
+  const [isUserDialogOpen, setIsUserDialogOpen] = useState(false);
+  const [orgFormData, setOrgFormData] = useState({
+    name: "",
+    email: "",
+    phone: "",
+    address: "",
+    latitude: null as number | null,
+    longitude: null as number | null
+  });
+  
+  const [showMap, setShowMap] = useState(false);
+  const [userFormData, setUserFormData] = useState({
+    email: "",
+    role: "farmer" as "admin" | "extension_officer" | "farmer"
+  });
+
+  // Fetch organization data
+  const fetchOrganization = useCallback(async () => {
+    if (!organizationId) return;
+    
+    try {
+      const { data, error } = await supabase
+        .from('organizations')
+        .select('*')
+        .eq('id', organizationId)
+        .single();
+
+      if (error) throw error;
+      
+      setOrganization(data);
+      
+      // Update form data
+      setOrgFormData({
+        name: data.name || "",
+        email: data.email || "",
+        phone: data.phone || "",
+        address: data.address || "",
+        latitude: data.latitude,
+        longitude: data.longitude
+      });
+    } catch (error) {
+      console.error('Error fetching organization:', error);
+      toast({
+        title: "Error",
+        description: "Failed to load organization data.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, [organizationId]);
+
+  // Handle organization form submission
+  const updateOrganization = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!organizationId) return;
+
+    try {
+      const { error } = await supabase
+        .from('organizations')
+        .update({
+          name: orgFormData.name,
+          email: orgFormData.email,
+          phone: orgFormData.phone,
+          address: orgFormData.address,
+          latitude: orgFormData.latitude,
+          longitude: orgFormData.longitude,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', organizationId);
+
+      if (error) throw error;
+
+      await fetchOrganization();
+      setIsOrgDialogOpen(false);
+      
+      toast({
+        title: "Success",
+        description: "Organization details updated successfully.",
+      });
+    } catch (error) {
+      console.error('Error updating organization:', error);
+      toast({
+        title: "Error",
+        description: "Failed to update organization details.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Handle form input changes
+  const handleOrgFormChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    setOrgFormData(prev => ({
+      ...prev,
+      [name]: value
+    }));
+  };
+
+  // Handle location selection from map
+  const handleLocationSelect = useCallback(({ lat, lng, address }: { lat: number; lng: number; address: string }) => {
+    setOrgFormData(prev => ({
+      ...prev,
+      latitude: lat,
+      longitude: lng,
+      address: address
+    }));
+  }, []);
+
+  // Handle user invitation
+  const handleInviteUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    try {
+      const { error } = await supabase
+        .from('user_roles')
+        .insert([
+          { 
+            user_id: userFormData.email, // This should be the user's email or ID
+            role: userFormData.role,
+            organization_id: organizationId
+          }
+        ]);
+
+      if (error) throw error;
+
+      setUserFormData({ email: "", role: "farmer" });
+      setIsUserDialogOpen(false);
+      
+      toast({
+        title: "Success",
+        description: `Invitation sent to ${userFormData.email}`,
+      });
+    } catch (error) {
+      console.error('Error inviting user:', error);
+      toast({
+        title: "Error",
+        description: "Failed to send invitation.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Handle user removal
+  const handleRemoveUser = async (userId: string) => {
+    if (!confirm('Are you sure you want to remove this user?')) return;
+    
+    try {
+      const { error } = await supabase
+        .from('user_roles')
+        .delete()
+        .eq('id', userId);
+
+      if (error) throw error;
+
+      // Refresh user roles
+      fetchUserRoles();
+      
+      toast({
+        title: "Success",
+        description: "User removed successfully.",
+      });
+    } catch (error) {
+      console.error('Error removing user:', error);
+      toast({
+        title: "Error",
+        description: "Failed to remove user.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Fetch user roles
+  const fetchUserRoles = useCallback(async () => {
+    if (!organizationId) return;
+    
+    try {
+      const { data, error } = await supabase
+        .from('user_roles')
+        .select(`
+          *,
+          profiles ( display_name )
+        `)
+        .eq('organization_id', organizationId);
+
+      if (error) throw error;
+      
+      setUserRoles(data || []);
+    } catch (error) {
+      console.error('Error fetching user roles:', error);
+      toast({
+        title: "Error",
+        description: "Failed to load user roles.",
+        variant: "destructive",
+      });
+    }
+  }, [organizationId]);
+
+  // Fetch data on component mount
+  useEffect(() => {
+    if (userRole === "admin") {
+      fetchOrganization();
+      fetchUserRoles();
+    }
+  }, [userRole, fetchOrganization, fetchUserRoles]);
+
+  // Render role badge
+  const getRoleBadgeVariant = (role: string) => {
+    switch (role) {
+      case 'admin':
+        return 'default';
+      case 'extension_officer':
+        return 'secondary';
+      case 'farmer':
+        return 'outline';
+      default:
+        return 'outline';
+    }
+  };
+
+  // Redirect non-admin users
+  if (userRole !== "admin") {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold">Access Denied</h1>
+          <p className="text-muted-foreground">
+            You don't have permission to access this page.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-3xl font-bold">Farm Settings</h1>
+        <p className="text-muted-foreground">
+          Manage your organization and user permissions
+        </p>
+      </div>
+
+      <Tabs defaultValue="organization" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="organization">Organization</TabsTrigger>
+          <TabsTrigger value="users">Users & Roles</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="organization" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Building className="h-5 w-5" />
+                    Organization Details
+                  </CardTitle>
+                  <CardDescription>
+                    Manage your organization's information and settings
+                  </CardDescription>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsOrgDialogOpen(true)}
+                >
+                  <Edit className="h-4 w-4 mr-2" />
+                  Edit
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Organization Name</p>
+                  <p className="text-sm">{organization?.name || "Not set"}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Email</p>
+                  <p className="text-sm">{organization?.email || "Not set"}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Phone</p>
+                  <p className="text-sm">{organization?.phone || "Not set"}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Address</p>
+                  <p className="text-sm">{organization?.address || "Not set"}</p>
+                </div>
+                {organization?.latitude && organization?.longitude && (
+                  <div className="md:col-span-2">
+                    <p className="text-sm font-medium text-muted-foreground mb-2">Location</p>
+                    <div className="h-48 bg-muted rounded-md overflow-hidden">
+                      <Suspense fallback={<div className="h-full flex items-center justify-center">Loading map...</div>}>
+                        <ErrorBoundary>
+                          <LocationMap 
+                            initialPosition={{ 
+                              lat: organization.latitude, 
+                              lng: organization.longitude 
+                            }}
+                            initialAddress={organization.address || ''}
+                            onLocationSelect={handleLocationSelect}
+                          />
+                        </ErrorBoundary>
+                      </Suspense>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Edit Organization Dialog */}
+          <Dialog open={isOrgDialogOpen} onOpenChange={setIsOrgDialogOpen}>
+            <DialogContent className="sm:max-w-[600px]">
+              <DialogHeader>
+                <DialogTitle>Edit Organization</DialogTitle>
+                <DialogDescription>
+                  Update your organization's information
+                </DialogDescription>
+              </DialogHeader>
+              <form onSubmit={updateOrganization}>
+                <div className="grid gap-4 py-4">
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="name" className="text-right">
+                      Name
+                    </Label>
+                    <Input
+                      id="name"
+                      name="name"
+                      value={orgFormData.name}
+                      onChange={handleOrgFormChange}
+                      className="col-span-3"
+                      required
+                    />
+                  </div>
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="email" className="text-right">
+                      Email
+                    </Label>
+                    <Input
+                      id="email"
+                      name="email"
+                      type="email"
+                      value={orgFormData.email}
+                      onChange={handleOrgFormChange}
+                      className="col-span-3"
+                      required
+                    />
+                  </div>
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="phone" className="text-right">
+                      Phone
+                    </Label>
+                    <Input
+                      id="phone"
+                      name="phone"
+                      type="tel"
+                      value={orgFormData.phone}
+                      onChange={handleOrgFormChange}
+                      className="col-span-3"
+                    />
+                  </div>
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="address" className="text-right">
+                      Address
+                    </Label>
+                    <div className="col-span-3 space-y-2">
+                      <Input
+                        id="address"
+                        name="address"
+                        value={orgFormData.address}
+                        onChange={handleOrgFormChange}
+                        className="w-full"
+                        required
+                      />
+                      <Button 
+                        type="button" 
+                        variant="outline" 
+                        size="sm"
+                        onClick={() => setShowMap(!showMap)}
+                        className="mt-2"
+                      >
+                        {showMap ? 'Hide Map' : 'Show Map for Location Selection'}
+                      </Button>
+                      {showMap && (
+                        <div className="mt-2 h-64 bg-muted rounded-md">
+                          <ErrorBoundary>
+                            <Suspense fallback={<div className="h-full flex items-center justify-center">Loading map...</div>}>
+                              <LocationMap 
+                                onLocationSelect={(location) => {
+                                  setOrgFormData(prev => ({
+                                    ...prev,
+                                    latitude: location.lat,
+                                    longitude: location.lng,
+                                    address: location.address
+                                  }));
+                                }}
+                                initialPosition={orgFormData.latitude && orgFormData.longitude ? 
+                                  { lat: orgFormData.latitude, lng: orgFormData.longitude } : null}
+                                initialAddress={orgFormData.address}
+                              />
+                            </Suspense>
+                          </ErrorBoundary>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button type="submit">Save Changes</Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+        </TabsContent>
+
+        <TabsContent value="users" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Users className="h-5 w-5" />
+                    Team Members
+                  </CardTitle>
+                  <CardDescription>
+                    Manage who has access to your organization
+                  </CardDescription>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsUserDialogOpen(true)}
+                >
+                  <UserPlus className="h-4 w-4 mr-2" />
+                  Invite User
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {userRoles.length === 0 ? (
+                  <div className="text-center py-8">
+                    <p className="text-muted-foreground">No team members found.</p>
+                  </div>
+                ) : (
+                  <div className="border rounded-md divide-y">
+                    {userRoles.map((user) => (
+                      <div key={user.id} className="flex items-center justify-between p-4">
+                        <div>
+                          <p className="font-medium">
+                            {user.profiles?.display_name || user.user_id}
+                          </p>
+                          <p className="text-sm text-muted-foreground">
+                            {user.user_id}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Badge variant={getRoleBadgeVariant(user.role)}>
+                            {user.role.replace('_', ' ')}
+                          </Badge>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleRemoveUser(user.id)}
+                            className="text-destructive hover:bg-destructive/10"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Invite User Dialog */}
+          <Dialog open={isUserDialogOpen} onOpenChange={setIsUserDialogOpen}>
+            <DialogContent className="sm:max-w-[425px]">
+              <DialogHeader>
+                <DialogTitle>Invite User</DialogTitle>
+                <DialogDescription>
+                  Send an invitation to a new team member
+                </DialogDescription>
+              </DialogHeader>
+              <form onSubmit={handleInviteUser}>
+                <div className="grid gap-4 py-4">
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="email" className="text-right">
+                      Email
+                    </Label>
+                    <Input
+                      id="email"
+                      type="email"
+                      value={userFormData.email}
+                      onChange={(e) => setUserFormData(prev => ({
+                        ...prev,
+                        email: e.target.value
+                      }))}
+                      className="col-span-3"
+                      required
+                    />
+                  </div>
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="role" className="text-right">
+                      Role
+                    </Label>
+                    <Select
+                      value={userFormData.role}
+                      onValueChange={(value: "admin" | "extension_officer" | "farmer") => 
+                        setUserFormData(prev => ({ ...prev, role: value }))
+                      }
+                    >
+                      <SelectTrigger className="col-span-3">
+                        <SelectValue placeholder="Select a role" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="admin">Admin</SelectItem>
+                        <SelectItem value="extension_officer">Extension Officer</SelectItem>
+                        <SelectItem value="farmer">Farmer</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button type="submit">Send Invitation</Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+};
+
+export default Settings;

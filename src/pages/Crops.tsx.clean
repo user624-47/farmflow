@@ -1,0 +1,899 @@
+import { useState, useEffect } from "react";
+import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/integrations/supabase/client";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Plus, Edit, Trash2, Search, Wheat, Calendar, BarChart3, Droplets, Thermometer, Leaf } from "lucide-react";
+import { toast } from "@/hooks/use-toast";
+import { AIRecommendations } from "@/components/ai/AIRecommendations";
+import { AIInsights } from "@/components/ai/AIInsights";
+import { SoilHealthMonitor, PestDiseaseIdentifier, CropGrowthMonitor } from "@/features/precision-agriculture";
+
+interface Crop {
+  id: string;
+  crop_name: string;
+  variety?: string;
+  planting_date?: string;
+  expected_harvest_date?: string;
+  actual_harvest_date?: string;
+  farm_area?: number;
+  quantity_planted?: number;
+  quantity_harvested?: number;
+  unit?: string;
+  season?: string;
+  status: string;
+  notes?: string;
+  created_at: string;
+}
+
+interface Farmer {
+  id: string;
+  first_name: string;
+  last_name: string;
+  farmer_id: string;
+}
+
+// Helper function to get badge color based on status
+const getStatusColor = (status: string) => {
+  switch (status?.toLowerCase()) {
+    case 'planted':
+      return 'default';
+    case 'growing':
+      return 'secondary';
+    case 'ready_for_harvest':
+      return 'warning';
+    case 'harvested':
+      return 'success';
+    case 'diseased':
+      return 'destructive';
+    default:
+      return 'outline';
+  }
+};
+
+// CropCard component for better code organization
+const CropCard = ({ 
+  crop, 
+  onEdit, 
+  onDelete, 
+  canManage 
+}: { 
+  crop: Crop; 
+  onEdit: (crop: Crop) => void; 
+  onDelete: (id: string) => void; 
+  canManage: boolean; 
+}) => (
+  <Card className="overflow-hidden hover:shadow-md transition-shadow">
+    <CardHeader>
+      <div className="flex items-center justify-between">
+        <CardTitle className="text-lg">{crop.crop_name}</CardTitle>
+        {canManage && (
+          <div className="flex space-x-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onEdit(crop)}
+            >
+              <Edit className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onDelete(crop.id)}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
+      </div>
+      <CardDescription className="flex items-center gap-2">
+        <Badge variant={getStatusColor(crop.status)}>{crop.status}</Badge>
+        {crop.variety && <span className="text-sm">• {crop.variety}</span>}
+      </CardDescription>
+    </CardHeader>
+    <CardContent>
+      <div className="space-y-2">
+        {crop.farm_area && (
+          <p className="text-sm">🌾 {crop.farm_area} hectares</p>
+        )}
+        {crop.planting_date && (
+          <p className="text-sm flex items-center">
+            <Calendar className="h-3 w-3 mr-1" />
+            Planted: {new Date(crop.planting_date).toLocaleDateString()}
+          </p>
+        )}
+        {crop.expected_harvest_date && (
+          <p className="text-sm">🎯 Expected: {new Date(crop.expected_harvest_date).toLocaleDateString()}</p>
+        )}
+        {crop.actual_harvest_date && (
+          <p className="text-sm">✅ Harvested: {new Date(crop.actual_harvest_date).toLocaleDateString()}</p>
+        )}
+        {crop.quantity_planted && (
+          <p className="text-sm">📦 Planted: {crop.quantity_planted} {crop.unit}</p>
+        )}
+        {crop.quantity_harvested && (
+          <p className="text-sm">📦 Harvested: {crop.quantity_harvested} {crop.unit}</p>
+        )}
+        {crop.season && (
+          <p className="text-sm">🌱 {crop.season}</p>
+        )}
+        {crop.quantity_planted && crop.quantity_harvested && (
+          <div className="mt-2">
+            <div className="text-xs text-muted-foreground mb-1">
+              Yield: {((Number(crop.quantity_harvested) / Number(crop.quantity_planted)) * 100).toFixed(1)}%
+            </div>
+            <div className="w-full bg-muted rounded-full h-2">
+              <div 
+                className="bg-primary h-2 rounded-full" 
+                style={{ width: `${Math.min((Number(crop.quantity_harvested) / Number(crop.quantity_planted)) * 100, 100)}%` }}
+              />
+            </div>
+          </div>
+        )}
+        
+        {crop.notes && (
+          <div className="mt-3 pt-3 border-t border-muted">
+            <p className="text-xs text-muted-foreground">Notes:</p>
+            <p className="text-sm">{crop.notes}</p>
+          </div>
+        )}
+        
+        <div className="mt-4 flex justify-end">
+          <Button 
+            variant="outline" 
+            size="sm"
+            onClick={() => onEdit(crop)}
+          >
+            View Details
+          </Button>
+        </div>
+      </div>
+    </CardContent>
+  </Card>
+);
+
+const Crops = () => {
+  const { user, userRole, organizationId, setupOrganization } = useAuth();
+  const [crops, setCrops] = useState<Crop[]>([]);
+  const [farmers, setFarmers] = useState<Farmer[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [editingCrop, setEditingCrop] = useState<Crop | null>(null);
+  const [formData, setFormData] = useState({
+    farmer_id: "",
+    crop_name: "",
+    variety: "",
+    planting_date: "",
+    expected_harvest_date: "",
+    actual_harvest_date: "",
+    farm_area: "",
+    quantity_planted: "",
+    quantity_harvested: "",
+    unit: "",
+    season: "",
+    status: "planted",
+    notes: ""
+  });
+
+  // Check if user can manage crops
+  const canManage = ['admin', 'manager', 'extension_officer'].includes(userRole || '');
+  
+  // Filter crops based on search term
+  const filteredCrops = crops.filter(crop => 
+    crop.crop_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (crop.variety && crop.variety.toLowerCase().includes(searchTerm.toLowerCase())) ||
+    (crop.notes && crop.notes.toLowerCase().includes(searchTerm.toLowerCase()))
+  );
+
+  // Reset form function
+  const resetForm = () => {
+    setFormData({
+      farmer_id: "",
+      crop_name: "",
+      variety: "",
+      planting_date: "",
+      expected_harvest_date: "",
+      actual_harvest_date: "",
+      farm_area: "",
+      quantity_planted: "",
+      quantity_harvested: "",
+      unit: "",
+      season: "",
+      status: "planted",
+      notes: ""
+    });
+  };
+
+  // Fetch crops data
+  const fetchCrops = async () => {
+    if (!organizationId) {
+      setLoading(false);
+      return;
+    }
+    
+    try {
+      const { data, error } = await supabase
+        .from("crops")
+        .select("*")
+        .eq("organization_id", organizationId)
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+      
+      setCrops(data || []);
+    } catch (error) {
+      console.error("Error fetching crops:", error);
+      toast({
+        title: "Error",
+        description: "Failed to fetch crops. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Fetch farmers data
+  const fetchFarmers = async () => {
+    if (!organizationId) return;
+    
+    try {
+      const { data, error } = await supabase
+        .from("farmers")
+        .select("*")
+        .eq("organization_id", organizationId);
+
+      if (error) throw error;
+      
+      setFarmers(data || []);
+    } catch (error) {
+      console.error("Error fetching farmers:", error);
+      toast({
+        title: "Error",
+        description: "Failed to fetch farmers. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Handle edit crop
+  const handleEdit = (crop: Crop) => {
+    setEditingCrop(crop);
+    setFormData({
+      ...crop,
+      farm_area: crop.farm_area?.toString() || "",
+      quantity_planted: crop.quantity_planted?.toString() || "",
+      quantity_harvested: crop.quantity_harvested?.toString() || ""
+    });
+    setIsDialogOpen(true);
+  };
+
+  // Handle delete crop
+  const handleDelete = async (id: string) => {
+    if (!window.confirm('Are you sure you want to delete this crop?')) return;
+    
+    try {
+      const { error } = await supabase
+        .from('crops')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+
+      setCrops(crops.filter(crop => crop.id !== id));
+      toast({
+        title: "Success",
+        description: "Crop deleted successfully",
+      });
+    } catch (error) {
+      console.error('Error deleting crop:', error);
+      toast({
+        title: "Error",
+        description: "Failed to delete crop",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Handle form submission
+  const handleSubmit = async () => {
+    try {
+      if (!formData.crop_name) {
+        throw new Error('Crop name is required');
+      }
+      
+      const cropData = {
+        ...formData,
+        farm_area: formData.farm_area ? parseFloat(formData.farm_area) : null,
+        quantity_planted: formData.quantity_planted ? parseFloat(formData.quantity_planted) : null,
+        quantity_harvested: formData.quantity_harvested ? parseFloat(formData.quantity_harvested) : null,
+        organization_id: organizationId,
+        updated_at: new Date().toISOString()
+      };
+      
+      if (editingCrop) {
+        // Update existing crop
+        const { error } = await supabase
+          .from('crops')
+          .update(cropData)
+          .eq('id', editingCrop.id);
+          
+        if (error) throw error;
+        
+        setCrops(crops.map(c => c.id === editingCrop.id ? { ...c, ...cropData } : c));
+        toast({
+          title: "Success",
+          description: "Crop updated successfully",
+        });
+      } else {
+        // Create new crop
+        const { data, error } = await supabase
+          .from('crops')
+          .insert([{
+            ...cropData,
+            created_at: new Date().toISOString()
+          }])
+          .select()
+          .single();
+          
+        if (error) throw error;
+        
+        setCrops([data, ...crops]);
+        toast({
+          title: "Success",
+          description: "Crop added successfully",
+        });
+      }
+      
+      setIsDialogOpen(false);
+      resetForm();
+    } catch (error) {
+      console.error('Error saving crop:', error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to save crop",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Fetch data on component mount
+  useEffect(() => {
+    fetchCrops();
+    fetchFarmers();
+  }, [organizationId]);
+
+  if (!organizationId) {
+    return (
+      <div className="container mx-auto p-6">
+        <div className="text-center">
+          <h2 className="text-2xl font-bold mb-4">Organization Setup Required</h2>
+          <p className="text-muted-foreground mb-4">Please set up your organization to continue</p>
+          <Button onClick={() => setupOrganization()}>Set Up Organization</Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="container mx-auto py-6 px-4">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Crop Management</h1>
+          <p className="text-muted-foreground">
+            Track and manage all your crops with precision agriculture tools
+          </p>
+        </div>
+        {canManage && (
+          <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
+            <Button 
+              variant="outline" 
+              className="w-full md:w-auto"
+              onClick={() => {
+                setEditingCrop(null);
+                resetForm();
+                setIsDialogOpen(true);
+              }}
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              Add New Crop
+            </Button>
+          </div>
+        )}
+      </div>
+
+      <Tabs defaultValue="overview" className="w-full">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+          <TabsList className="grid w-full md:w-auto grid-cols-2 md:flex">
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="all">All Crops</TabsTrigger>
+            <TabsTrigger value="active">Active</TabsTrigger>
+            <TabsTrigger value="harvested">Harvested</TabsTrigger>
+            <TabsTrigger value="analytics">Analytics</TabsTrigger>
+          </TabsList>
+          <div className="relative w-full md:w-64">
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              type="search"
+              placeholder="Search crops..."
+              className="pl-8 w-full"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+        </div>
+
+        <TabsContent value="overview" className="space-y-6">
+          <div className="grid gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Leaf className="h-5 w-5 text-green-600" />
+                    Active Crops
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold">
+                    {crops.filter(c => c.status !== 'harvested').length}
+                  </div>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Currently growing in your fields
+                  </p>
+                </CardContent>
+              </Card>
+              
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Thermometer className="h-5 w-5 text-amber-600" />
+                    Field Conditions
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center gap-2">
+                    <div className="text-3xl font-bold">28°C</div>
+                    <div className="text-sm text-muted-foreground">
+                      <div>Partly Cloudy</div>
+                      <div>65% Humidity</div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+              
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Droplets className="h-5 w-5 text-blue-600" />
+                    Water Management
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold">
+                    15.2mm
+                  </div>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Rainfall in last 24 hours
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+            
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <CropGrowthMonitor />
+              <div className="space-y-6">
+                <SoilHealthMonitor fieldId="field-1" />
+                <PestDiseaseIdentifier />
+              </div>
+            </div>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="all" className="space-y-4">
+          {loading ? (
+            <div className="flex items-center justify-center h-64">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+            </div>
+          ) : filteredCrops.length === 0 ? (
+            <div className="text-center py-12">
+              <Wheat className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+              <h3 className="text-lg font-medium mb-1">No crops found</h3>
+              <p className="text-muted-foreground mb-4">
+                {searchTerm ? "No crops match your search criteria." : "Get started by adding your first crop"}
+              </p>
+              {canManage && !searchTerm && (
+                <Button onClick={() => {
+                  setEditingCrop(null);
+                  resetForm();
+                  setIsDialogOpen(true);
+                }}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Crop
+                </Button>
+              )}
+            </div>
+          ) : (
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {filteredCrops.map((crop) => (
+                <CropCard 
+                  key={crop.id}
+                  crop={crop}
+                  onEdit={handleEdit}
+                  onDelete={handleDelete}
+                  canManage={canManage}
+                />
+              ))}
+            </div>
+          )}
+        </TabsContent>
+        
+        <TabsContent value="active" className="space-y-4">
+          {loading ? (
+            <div className="flex items-center justify-center h-64">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+            </div>
+          ) : (
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {filteredCrops
+                .filter(crop => crop.status !== 'harvested')
+                .map((crop) => (
+                  <CropCard 
+                    key={crop.id}
+                    crop={crop}
+                    onEdit={handleEdit}
+                    onDelete={handleDelete}
+                    canManage={canManage}
+                  />
+                ))}
+            </div>
+          )}
+        </TabsContent>
+        
+        <TabsContent value="harvested" className="space-y-4">
+          {loading ? (
+            <div className="flex items-center justify-center h-64">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+            </div>
+          ) : (
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {filteredCrops
+                .filter(crop => crop.status === 'harvested')
+                .map((crop) => (
+                  <CropCard 
+                    key={crop.id}
+                    crop={crop}
+                    onEdit={handleEdit}
+                    onDelete={handleDelete}
+                    canManage={canManage}
+                  />
+                ))}
+            </div>
+          )}
+        </TabsContent>
+        
+        <TabsContent value="analytics" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Crop Analytics</CardTitle>
+              <CardDescription>Detailed analytics and insights about your crops</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="h-96 flex flex-col items-center justify-center bg-muted/50 rounded-lg">
+                <BarChart3 className="h-12 w-12 text-muted-foreground mb-4" />
+                <h3 className="text-lg font-medium mb-1">Crop Analytics Coming Soon</h3>
+                <p className="text-muted-foreground text-center max-w-md">
+                  We're working on bringing you detailed analytics and insights about your crop performance, yield predictions, and more.
+                </p>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-8">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Yield Prediction</CardTitle>
+                    <CardDescription>Estimated yield for current season</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="h-40 flex items-center justify-center">
+                      <div className="text-center">
+                        <div className="text-3xl font-bold text-green-600">+12.5%</div>
+                        <p className="text-sm text-muted-foreground">vs last season</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Soil Health</CardTitle>
+                    <CardDescription>Average across all fields</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="h-40 flex items-center justify-center">
+                      <div className="text-center">
+                        <div className="text-3xl font-bold text-amber-600">Good</div>
+                        <p className="text-sm text-muted-foreground">pH: 6.2 (Optimal)</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Crop Health</CardTitle>
+                    <CardDescription>Based on latest field scans</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="h-40 flex items-center justify-center">
+                      <div className="text-center">
+                        <div className="text-3xl font-bold text-green-600">94%</div>
+                        <p className="text-sm text-muted-foreground">Healthy plants</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+
+      {/* Add/Edit Crop Dialog */}
+      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+        <DialogContent className="sm:max-w-[600px]">
+          <DialogHeader>
+            <DialogTitle>{editingCrop ? 'Edit Crop' : 'Add New Crop'}</DialogTitle>
+            <DialogDescription>
+              {editingCrop ? 'Update the crop details below.' : 'Fill in the details below to add a new crop.'}
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="crop_name">Crop Name *</Label>
+                <Input
+                  id="crop_name"
+                  value={formData.crop_name}
+                  onChange={(e) => setFormData({...formData, crop_name: e.target.value})}
+                  placeholder="e.g., Maize, Rice, Beans"
+                  required
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="variety">Variety (Optional)</Label>
+                <Input
+                  id="variety"
+                  value={formData.variety}
+                  onChange={(e) => setFormData({...formData, variety: e.target.value})}
+                  placeholder="e.g., Hybrid, Local"
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="status">Status *</Label>
+                <Select
+                  value={formData.status}
+                  onValueChange={(value) => setFormData({...formData, status: value})}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="planted">Planted</SelectItem>
+                    <SelectItem value="growing">Growing</SelectItem>
+                    <SelectItem value="ready_for_harvest">Ready for Harvest</SelectItem>
+                    <SelectItem value="harvested">Harvested</SelectItem>
+                    <SelectItem value="diseased">Diseased</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="farmer_id">Farmer (Optional)</Label>
+                <Select
+                  value={formData.farmer_id}
+                  onValueChange={(value) => setFormData({...formData, farmer_id: value})}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select farmer" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {farmers.map((farmer) => (
+                      <SelectItem key={farmer.id} value={farmer.id}>
+                        {farmer.first_name} {farmer.last_name} ({farmer.farmer_id})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="planting_date">Planting Date</Label>
+                <Input
+                  id="planting_date"
+                  type="date"
+                  value={formData.planting_date}
+                  onChange={(e) => setFormData({...formData, planting_date: e.target.value})}
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="expected_harvest_date">Expected Harvest Date</Label>
+                <Input
+                  id="expected_harvest_date"
+                  type="date"
+                  value={formData.expected_harvest_date}
+                  onChange={(e) => setFormData({...formData, expected_harvest_date: e.target.value})}
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="actual_harvest_date">Actual Harvest Date</Label>
+                <Input
+                  id="actual_harvest_date"
+                  type="date"
+                  value={formData.actual_harvest_date}
+                  onChange={(e) => setFormData({...formData, actual_harvest_date: e.target.value})}
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="farm_area">Farm Area (hectares)</Label>
+                <Input
+                  id="farm_area"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={formData.farm_area}
+                  onChange={(e) => setFormData({...formData, farm_area: e.target.value})}
+                  placeholder="e.g., 2.5"
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="quantity_planted">Quantity Planted</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="quantity_planted"
+                    type="number"
+                    min="0"
+                    value={formData.quantity_planted}
+                    onChange={(e) => setFormData({...formData, quantity_planted: e.target.value})}
+                    placeholder="e.g., 100"
+                  />
+                  <Select
+                    value={formData.unit}
+                    onValueChange={(value) => setFormData({...formData, unit: value})}
+                  >
+                    <SelectTrigger className="w-[120px]">
+                      <SelectValue placeholder="Unit" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="kg">kg</SelectItem>
+                      <SelectItem value="g">g</SelectItem>
+                      <SelectItem value="tons">tons</SelectItem>
+                      <SelectItem value="bags">bags</SelectItem>
+                      <SelectItem value="seeds">seeds</SelectItem>
+                      <SelectItem value="seedlings">seedlings</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="quantity_harvested">Quantity Harvested</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="quantity_harvested"
+                    type="number"
+                    min="0"
+                    value={formData.quantity_harvested}
+                    onChange={(e) => setFormData({...formData, quantity_harvested: e.target.value})}
+                    placeholder="e.g., 80"
+                  />
+                  <Select
+                    value={formData.unit}
+                    onValueChange={(value) => setFormData({...formData, unit: value})}
+                  >
+                    <SelectTrigger className="w-[120px]">
+                      <SelectValue placeholder="Unit" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="kg">kg</SelectItem>
+                      <SelectItem value="g">g</SelectItem>
+                      <SelectItem value="tons">tons</SelectItem>
+                      <SelectItem value="bags">bags</SelectItem>
+                      <SelectItem value="seeds">seeds</SelectItem>
+                      <SelectItem value="seedlings">seedlings</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="season">Season (Optional)</Label>
+                <Select
+                  value={formData.season}
+                  onValueChange={(value) => setFormData({...formData, season: value})}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select season" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="dry">Dry Season</SelectItem>
+                    <SelectItem value="rainy">Rainy Season</SelectItem>
+                    <SelectItem value="harmattan">Harmattan</SelectItem>
+                    <SelectItem value="winter">Winter</SelectItem>
+                    <SelectItem value="summer">Summer</SelectItem>
+                    <SelectItem value="spring">Spring</SelectItem>
+                    <SelectItem value="autumn">Autumn</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div className="space-y-2 md:col-span-2">
+                <Label htmlFor="notes">Notes (Optional)</Label>
+                <Input
+                  id="notes"
+                  value={formData.notes}
+                  onChange={(e) => setFormData({...formData, notes: e.target.value})}
+                  placeholder="Any additional notes about this crop..."
+                />
+              </div>
+            </div>
+            
+            <AIRecommendations 
+              cropName={formData.crop_name}
+              variety={formData.variety}
+              status={formData.status}
+              season={formData.season}
+            />
+            
+            <AIInsights 
+              cropData={formData}
+              onApplySuggestion={(suggestion) => {
+                // Apply AI suggestion to the form
+                setFormData(prev => ({
+                  ...prev,
+                  ...suggestion
+                }));
+                toast({
+                  title: "AI Suggestion Applied",
+                  description: "The AI suggestion has been applied to the form."
+                });
+              }}
+            />
+          </div>
+          
+          <DialogFooter>
+            <Button 
+              variant="outline" 
+              onClick={() => {
+                setIsDialogOpen(false);
+                resetForm();
+              }}
+            >
+              Cancel
+            </Button>
+            <Button 
+              type="submit"
+              onClick={handleSubmit}
+            >
+              {editingCrop ? 'Update Crop' : 'Add Crop'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+};
+
+export default Crops;

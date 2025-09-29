@@ -1,0 +1,249 @@
+import { supabase } from "@/integrations/supabase/client";
+import OpenAI from 'openai';
+import type { CropInsightData, CropGrowthStage, CurrentConditions } from './types/crop';
+import type { Database } from '@/types/supabase-custom';
+
+// Re-export types for external use
+export type { CropInsightData, CropGrowthStage, CurrentConditions };
+
+// Initialize OpenAI with your API key
+const openai = new OpenAI({
+  apiKey: import.meta.env.VITE_OPENAI_API_KEY,
+  dangerouslyAllowBrowser: true // Only if running in browser
+});
+
+// AI Model Configuration
+const AI_MODEL = 'gpt-4-turbo-preview';
+const AI_TEMPERATURE = 0.7;
+
+// Cache for storing AI responses to reduce API calls
+const aiResponseCache = new Map<string, any>();
+
+// Type for the growth stages table row
+type GrowthStageRow = {
+  id: string;
+  crop_id: string;
+  stage_name: string;
+  stage_order: number;
+  duration_days: number;
+  description?: string | null;
+  optimal_temp_min?: number | null;
+  optimal_temp_max?: number | null;
+  water_needs?: string | null;
+  nutrient_needs?: string | null;
+  common_issues?: string[] | null;
+  created_at?: string;
+  updated_at?: string | null;
+};
+
+/**
+ * Fetches growth stages for a specific crop
+ */
+async function fetchGrowthStages(cropId: string): Promise<GrowthStageRow[]> {
+  try {
+    const { data, error } = await (supabase as any)
+      .from('crop_growth_stages')
+      .select('*')
+      .eq('crop_id', cropId)
+      .order('stage_order', { ascending: true });
+
+    if (error) {
+      throw new Error(`Failed to fetch growth stages: ${error.message}`);
+    }
+
+    if (!data) {
+      throw new Error('No growth stages data returned');
+    }
+
+    return data.map((row: any) => ({
+      id: row.id,
+      crop_id: row.crop_id,
+      stage_name: row.stage_name,
+      stage_order: row.stage_order,
+      duration_days: row.duration_days,
+      description: row.description || null,
+      optimal_temp_min: row.optimal_temp_min || null,
+      optimal_temp_max: row.optimal_temp_max || null,
+      water_needs: row.water_needs || null,
+      nutrient_needs: row.nutrient_needs || null,
+      common_issues: Array.isArray(row.common_issues) ? row.common_issues : [],
+      created_at: row.created_at,
+      updated_at: row.updated_at || null
+    }));
+  } catch (error) {
+    console.error('Error in fetchGrowthStages:', error);
+    throw error;
+  }
+}
+
+/**
+ * Fetches crop data by name
+ */
+async function fetchCropByName(cropName: string) {
+  try {
+    const { data, error } = await supabase
+      .from('crops')
+      .select('*')
+      .ilike('crop_name', cropName)
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to fetch crop: ${error.message}`);
+    }
+
+    return data;
+  } catch (error) {
+    console.error('Error in fetchCropByName:', error);
+    throw error;
+  }
+}
+
+/**
+ * Generates AI-powered analysis for crop conditions
+ */
+async function analyzeCropWithAI(
+  cropName: string, 
+  conditions: CurrentConditions, 
+  stage: CropGrowthStage
+): Promise<{
+  healthAssessment: string;
+  growthAnalysis: string;
+  aiRecommendations: string[];
+  riskFactors: Array<{ factor: string; risk: 'low' | 'medium' | 'high'; details: string }>;
+}> {
+  const cacheKey = `${cropName}-${stage.id}-${JSON.stringify(conditions)}`;
+  
+  if (aiResponseCache.has(cacheKey)) {
+    return aiResponseCache.get(cacheKey);
+  }
+
+  try {
+    const prompt = `Analyze the following crop conditions and provide insights:
+    - Crop: ${cropName}
+    - Current Stage: ${stage.stage_name}
+    - Temperature: ${conditions.temperature}°C
+    - Humidity: ${conditions.humidity}%
+    - Soil Moisture: ${conditions.soil_moisture}%
+    - Light Intensity: ${conditions.light_intensity} lux
+    
+    Provide a health assessment, growth analysis, recommendations, and risk factors.`;
+
+    const completion = await openai.chat.completions.create({
+      model: AI_MODEL,
+      temperature: AI_TEMPERATURE,
+      messages: [
+        { role: 'system', content: 'You are an agricultural expert providing crop analysis.' },
+        { role: 'user', content: prompt }
+      ]
+    });
+
+    const response = completion.choices[0]?.message?.content;
+    if (!response) {
+      throw new Error('No response from AI model');
+    }
+
+    // Parse the response (in a real app, you'd want more robust parsing)
+    const result = {
+      healthAssessment: 'Healthy', // Simplified for example
+      growthAnalysis: 'Growing as expected', // Simplified for example
+      aiRecommendations: ['Ensure proper watering', 'Monitor for pests'],
+      riskFactors: [
+        { factor: 'Temperature', risk: 'low' as const, details: 'Within optimal range' }
+      ]
+    };
+
+    aiResponseCache.set(cacheKey, result);
+    return result;
+  } catch (error) {
+    console.error('Error in analyzeCropWithAI:', error);
+    // Return default values if AI fails
+    return {
+      healthAssessment: 'Analysis unavailable',
+      growthAnalysis: 'Unable to analyze growth',
+      aiRecommendations: [],
+      riskFactors: []
+    };
+  }
+}
+
+/**
+ * Main function to fetch crop insights with AI analysis
+ */
+async function fetchCropInsights(cropName: string): Promise<CropInsightData> {
+  try {
+    // Fetch crop data
+    const cropData = await fetchCropByName(cropName);
+    if (!cropData) {
+      throw new Error(`Crop '${cropName}' not found`);
+    }
+
+    // Fetch growth stages
+    const growthStages = await fetchGrowthStages(cropData.id);
+    if (!growthStages?.length) {
+      throw new Error(`No growth stages found for crop '${cropName}'`);
+    }
+
+    // Get current stage (simplified - in a real app, you'd track progress)
+    const currentStage = growthStages[0];
+    const daysInCurrentStage = 7; // Example value
+    const stageProgress = Math.min(100, Math.round((daysInCurrentStage / (currentStage.duration_days || 1)) * 100));
+
+    // Get current conditions (mock data)
+    const currentConditions: CurrentConditions = {
+      temperature: 25.5,
+      humidity: 65,
+      soil_moisture: 70,
+      light_intensity: 10000,
+      last_updated: new Date().toISOString(),
+      source: 'weather_api' as const
+    };
+
+    // Get AI analysis
+    const aiAnalysis = await analyzeCropWithAI(cropName, currentConditions, currentStage);
+
+    // Generate mock issues (in a real app, this would come from monitoring)
+    const issues = [
+      {
+        type: 'pest' as const,
+        severity: 'low' as const,
+        description: 'Minor aphid infestation detected',
+        recommendations: ['Apply neem oil', 'Introduce beneficial insects']
+      }
+    ];
+
+    // Return the complete insight data
+    return {
+      id: cropData.id,
+      crop_id: cropData.id,
+      current_stage: currentStage.stage_name,
+      stage_progress: stageProgress,
+      days_in_current_stage: daysInCurrentStage,
+      days_until_next_stage: Math.max(0, (currentStage.duration_days || 0) - daysInCurrentStage),
+      health_score: 85, // Example value
+      last_updated: new Date().toISOString(),
+      growth_stages: growthStages.map(stage => ({
+        ...stage,
+        description: stage.description || undefined,
+        optimal_temp_min: stage.optimal_temp_min ?? undefined,
+        optimal_temp_max: stage.optimal_temp_max ?? undefined,
+        water_needs: stage.water_needs || undefined,
+        nutrient_needs: stage.nutrient_needs || undefined,
+        common_issues: stage.common_issues?.length ? stage.common_issues : undefined
+      })),
+      current_conditions,
+      recommendations: aiAnalysis.aiRecommendations,
+      issues
+    };
+  } catch (error) {
+    console.error('Error in fetchCropInsights:', error);
+    throw error instanceof Error 
+      ? error 
+      : new Error('Failed to fetch crop insights');
+  }
+}
+
+// Export the service object
+export default {
+  fetchCropInsights,
+  // Add other methods here as needed
+};
