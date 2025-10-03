@@ -3,9 +3,6 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "engines": {
-    "node": "20.x"
-  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -15,6 +12,9 @@
     "server": "tsx watch server/index.ts",
     "start": "vite & tsx server/index.ts",
     "start:dev": "concurrently \"vite\" \"tsx watch server/index.ts\""
+  },
+  "resolutions": {
+    "@rollup/rollup-linux-x64-gnu": "npm:@rollup/wasm-node"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
@@ -105,7 +105,6 @@
     "tsx": "^4.20.6",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.38.0",
-    "vite": "^5.4.19",
-    "rollup": "^4.24.0"
+    "vite": "^5.4.19"
   }
 }
