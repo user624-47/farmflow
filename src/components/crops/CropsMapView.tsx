@@ -51,7 +51,7 @@ export function CropsMapView({ onAddCrop }: { onAddCrop: () => void }) {
           name: organization.name
         });
         
-        const data = await fetchWeatherData(organizationId);
+        const data = await fetchWeatherData(organization.latitude, organization.longitude);
         setWeatherData({
           ...data,
           // Override with organization's location data

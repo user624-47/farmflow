@@ -105,9 +105,13 @@ export const WeatherDashboard = ({
   
   // Format forecast data for charts
   const chartData = forecast?.map(day => ({
-    ...day,
-    date: day.date.split(' ')[0], // Just show the day part
-    rainfall: Math.max(0, day.rainfall) // Ensure no negative values
+    date: new Date(day.date).toLocaleDateString('en-US', { weekday: 'short' }),
+    temp: Math.round(day.temp),
+    humidity: day.humidity || 0,
+    rain: day.rainfall || 0,
+    wind_speed: day.windSpeed || 0,
+    condition: day.condition,
+    icon: day.icon
   })) || [];
   
   // Calculate min/max temps for Y-axis
@@ -351,28 +355,30 @@ export const WeatherDashboard = ({
             <Card key={day.date} className="hover:shadow-md transition-shadow">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-medium">
-                  {day.date === 'Today' ? 'Today' : day.date}
+                  {day.date}
                 </CardTitle>
-                <CardDescription className="text-xs">{day.condition}</CardDescription>
+                <CardDescription className="text-xs">{day.condition || 'Clear'}</CardDescription>
               </CardHeader>
               <CardContent className="flex items-center justify-between">
                 <div>
                   <div className="text-2xl font-bold">{day.temp}°C</div>
                   <div className="text-sm text-muted-foreground">
-                    {day.rainfall > 0 ? (
+                    {day.rain > 0 ? (
                       <span className="flex items-center gap-1">
                         <CloudRain className="h-3.5 w-3.5 text-blue-400" />
-                        {day.rainfall}mm
+                        {day.rain}mm
                       </span>
                     ) : 'No rain'}
                   </div>
                   <div className="text-xs text-muted-foreground mt-1">
-                    Wind: {day.windSpeed} km/h
+                    Wind: {day.wind_speed} km/h
                   </div>
                 </div>
-                <div className="text-4xl">
-                  <WeatherIcon condition={day.icon} />
-                </div>
+                {day.icon && (
+                  <div className="text-4xl">
+                    <WeatherIcon condition={day.icon} />
+                  </div>
+                )}
               </CardContent>
             </Card>
           ))}

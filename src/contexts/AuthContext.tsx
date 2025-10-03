@@ -73,36 +73,59 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const refreshUserRole = async () => {
-    if (!user) return;
+    if (!user) {
+      console.log("No user, skipping role refresh");
+      return;
+    }
     
     console.log("Refreshing user role for user:", user.id);
     
     try {
-      const { data, error } = await supabase
+      // First get the user role and organization ID
+      const { data: roleData, error: roleError } = await supabase
         .from("user_roles")
         .select(`
           role, 
-          organization_id,
-          organizations (*)
+          organization_id
         `)
         .eq("user_id", user.id)
         .maybeSingle();
       
-      console.log("User role fetch result:", { data, error });
+      console.log("User role fetch result:", { roleData, roleError });
       
-      if (error) {
-        console.error("Error fetching user role:", error);
+      if (roleError) {
+        console.error("Error fetching user role:", roleError);
+        return;
       }
       
-      if (data) {
-        setUserRole(data.role);
-        setOrganizationId(data.organization_id);
-        if (data.organizations) {
-          setOrganization(data.organizations);
+      if (roleData) {
+        setUserRole(roleData.role);
+        setOrganizationId(roleData.organization_id);
+        
+        // If we have an organization ID, fetch the full organization data
+        if (roleData.organization_id) {
+          console.log("Fetching organization data for ID:", roleData.organization_id);
+          const { data: orgData, error: orgError } = await supabase
+            .from('organizations')
+            .select('*')
+            .eq('id', roleData.organization_id)
+            .maybeSingle();
+            
+          if (orgError) {
+            console.error("Error fetching organization:", orgError);
+          } else if (orgData) {
+            console.log("Setting organization data:", orgData);
+            setOrganization(orgData);
+          } else {
+            console.log("No organization data found for ID:", roleData.organization_id);
+            setOrganization(null);
+          }
         } else {
+          console.log("No organization ID found in user role");
           setOrganization(null);
         }
       } else {
+        console.log("No role data found for user:", user.id);
         setUserRole(null);
         setOrganizationId(null);
         setOrganization(null);
@@ -115,13 +138,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!user) return { error: new Error("User not authenticated") };
     
     try {
-      const { data, error } = await supabase.rpc('setup_organization_with_admin', {
+      console.log("Setting up organization...");
+      const { data: organizationId, error } = await supabase.rpc('setup_organization_with_admin', {
         org_name: organizationName || 'My Organization'
       });
       
       if (error) {
         console.error("Error setting up organization:", error);
         return { error };
+      }
+      
+      console.log("Organization created with ID:", organizationId);
+      
+      // Manually set the organization in the state
+      if (organizationId) {
+        const { data: orgData, error: orgError } = await supabase
+          .from('organizations')
+          .select('*')
+          .eq('id', organizationId)
+          .single();
+          
+        if (orgError) {
+          console.error("Error fetching organization:", orgError);
+          return { error: orgError };
+        }
+        
+        setOrganization(orgData);
+        setOrganizationId(organizationId);
       }
       
       // Refresh role after organization setup

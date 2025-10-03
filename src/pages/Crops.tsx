@@ -1,9 +1,11 @@
 // React & Hooks
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
+import { WeatherRecords } from "@/components/weather/WeatherRecords";
 
 // State Management
 import { useAuth } from "@/contexts/AuthContext";
+import { useFarmLocation } from "@/hooks/useFarmLocation";
 import { toast, useToast } from "@/hooks/use-toast";
 import { v4 as uuidv4 } from 'uuid';
 import { useQuery } from '@tanstack/react-query';
@@ -68,12 +70,18 @@ import { Calendar as CalendarComponent } from "@/components/ui/calendar";
 
 // Map Components
 import { CropsMapView } from "@/components/crops/CropsMapView";
-import { LocationMap } from "@/components/maps/LocationMap";
 import { getStatusColor } from "@/utils/ui";
 
 // Types
 import type { Crop } from "@/types/crop";
-import type { Farmer } from "@/types/farmer";
+
+// Define Farmer type locally since the module is missing
+type Farmer = {
+  id: string;
+  first_name: string;
+  last_name: string;
+  farmer_id: string;
+};
 
 // Utils & Helpers
 import { format } from "date-fns";
@@ -121,13 +129,6 @@ import {
   CropGrowthMonitor 
 } from "@/features/precision-agriculture";
 
-interface Farmer {
-  id: string;
-  first_name: string;
-  last_name: string;
-  farmer_id: string;
-}
-
 // Using Crop type from @/types/crop
 // getStatusColor is now imported from @/utils/ui
 
@@ -144,17 +145,21 @@ interface CropForm extends Omit<Crop, 'id' | 'created_at' | 'updated_at' | 'farm
   quantity_harvested: string;
   [key: string]: any; // Add index signature to match the base interface
 }
-
 // Main Crops Component with Map View
 const Crops = () => {
   const { user, userRole, organizationId, setupOrganization } = useAuth();
   const [crops, setCrops] = useState<Crop[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
-  const [activeTab, setActiveTab] = useState("list"); // 'list' or 'map'
+  const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
+  
+  // Get farm location
+  const { farmLocation, isLoading: isLoadingLocation, error: locationError } = useFarmLocation();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isLocationDialogOpen, setIsLocationDialogOpen] = useState(false);
-  const [selectedLocation, setSelectedLocation] = useState<{lat: number, lng: number} | null>(null);
+  const [selectedLocation, setSelectedLocation] = useState<{lat: number, lng: number} | null>(
+    farmLocation ? { lat: farmLocation.latitude, lng: farmLocation.longitude } : null
+  );
   const [farmers, setFarmers] = useState<any[]>([]);
   const [pagination, setPagination] = useState({
     page: 1,
@@ -757,11 +762,12 @@ const Crops = () => {
       <div className="w-full max-w-[2000px] mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <Tabs defaultValue="overview" className="w-full space-y-6">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
-            <TabsList className="grid w-full md:w-auto grid-cols-2 md:flex">
+            <TabsList className="grid w-full md:w-auto grid-cols-3 md:flex">
               <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="all">All Crops</TabsTrigger>
               <TabsTrigger value="active">Active</TabsTrigger>
               <TabsTrigger value="harvested">Harvested</TabsTrigger>
+              <TabsTrigger value="weather">Weather</TabsTrigger>
               <TabsTrigger value="analytics">Analytics</TabsTrigger>
             </TabsList>
             <div className="relative w-full md:w-64">
@@ -841,6 +847,37 @@ const Crops = () => {
                   <PestDiseaseIdentifier />
                 </div>
               </div>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="weather" className="space-y-6">
+            <div className="grid gap-6 w-full">
+              {isLoadingLocation ? (
+                <div className="p-4 border rounded-lg">
+                  <div className="flex items-center space-x-4">
+                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                    <p>Loading farm location...</p>
+                  </div>
+                </div>
+              ) : locationError ? (
+                <div className="p-4 border border-red-200 bg-red-50 rounded-lg">
+                  <p className="text-red-600">
+                    {locationError}. Please set your farm location in the organization settings.
+                  </p>
+                </div>
+              ) : farmLocation ? (
+                <WeatherRecords 
+                  latitude={farmLocation.latitude}
+                  longitude={farmLocation.longitude}
+                  locationName={farmLocation.address || 'Farm Location'}
+                />
+              ) : (
+                <div className="p-4 border border-amber-200 bg-amber-50 rounded-lg">
+                  <p className="text-amber-700">
+                    Farm location not set. Please update your organization settings to view weather data.
+                  </p>
+                </div>
+              )}
             </div>
           </TabsContent>
 

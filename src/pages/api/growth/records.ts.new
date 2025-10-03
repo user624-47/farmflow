@@ -1,0 +1,117 @@
+import { createClient } from '@supabase/supabase-js';
+import type { NextApiRequest, NextApiResponse } from 'next';
+import type { Database } from '@/types/database.types';
+
+// Define basic types
+interface GrowthStagesRow {
+  id: string;
+  name: string;
+  description?: string;
+}
+
+interface CropsRow {
+  id: string;
+  organization_id: string;
+}
+
+interface GrowthRecordsRow {
+  id: string;
+  crop_id: string;
+  stage_id: string;
+  notes?: string;
+  images?: string[];
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+type GrowthRecord = GrowthRecordsRow & {
+  stage?: GrowthStagesRow;
+};
+
+type GrowthRecordRequest = Omit<GrowthRecordsRow, 'id' | 'created_at' | 'created_by' | 'updated_at'> & {
+  updated_at?: string;
+};
+
+type SupabaseClient = ReturnType<typeof createClient>;
+
+// Initialize Supabase with environment variables
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const supabase = createClient(supabaseUrl, supabaseKey);
+
+// Helper function to verify crop access
+async function verifyCropAccess(supabaseClient: SupabaseClient, userId: string, cropId: string): Promise<boolean> {
+  try {
+    const { data, error } = await supabaseClient
+      .from('crops')
+      .select('id')
+      .eq('id', cropId)
+      .single();
+
+    if (error || !data) return false;
+    return true;
+  } catch (error) {
+    console.error('Error verifying crop access:', error);
+    return false;
+  }
+}
+
+// Rest of your existing code...
+// [Previous handleGetCropRecords, handleGetRecord, handleCreateRecord, handleUpdateRecord, handleDeleteRecord, and handler functions remain the same]
+
+export default async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse
+) {
+  try {
+    // Get the user ID from the session
+    const { user } = await getServerAuth({ req });
+    const userId = user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ error: 'User ID is required' });
+    }
+
+    // Use the main Supabase client
+    const userSupabase = supabase;
+
+    const { cropId, id: recordId } = req.query as { cropId?: string; id?: string };
+
+    if (!cropId && !recordId && req.method !== 'POST') {
+      return res.status(400).json({ error: 'Either cropId or id is required' });
+    }
+
+    switch (req.method) {
+      case 'GET':
+        if (recordId) {
+          return await handleGetRecord(res, userSupabase, recordId, userId);
+        } else if (cropId) {
+          return await handleGetCropRecords(res, userSupabase, cropId, userId);
+        } else {
+          return res.status(400).json({ error: 'Missing required parameters' });
+        }
+      case 'POST':
+        if (!cropId) {
+          return res.status(400).json({ error: 'Crop ID is required' });
+        }
+        return await handleCreateRecord(req, res, userSupabase, cropId, userId);
+      case 'PUT':
+        if (!recordId) {
+          return res.status(400).json({ error: 'Record ID is required' });
+        }
+        return await handleUpdateRecord(req, res, userSupabase, recordId, userId);
+      case 'DELETE':
+        if (!recordId) {
+          return res.status(400).json({ error: 'Record ID is required' });
+        }
+        return await handleDeleteRecord(res, userSupabase, recordId, userId);
+      default:
+        res.setHeader('Allow', ['GET', 'POST', 'PUT', 'DELETE']);
+        return res.status(405).json({ error: `Method ${req.method} not allowed` });
+    }
+  } catch (error) {
+    console.error('API Error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+}

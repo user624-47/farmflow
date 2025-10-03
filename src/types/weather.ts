@@ -71,3 +71,20 @@ export interface CropInsightsData {
     details: string;
   }[];
 }
+
+export interface HistoricalWeatherData {
+  date: string;
+  temp: {
+    min: number;
+    max: number;
+    avg: number;
+  };
+  humidity: number;
+  wind_speed: number;
+  weather: Array<{
+    main: string;
+    description: string;
+    icon: string;
+  }>;
+  rain?: number;
+}

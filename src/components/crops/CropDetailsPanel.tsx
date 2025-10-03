@@ -68,7 +68,7 @@ export function CropDetailsPanel({ cropId, onClose }: CropDetailsPanelProps) {
     <div className="space-y-4 p-4">
       <div className="flex items-center justify-between">
         <h3 className="text-lg font-semibold">{crop.name}</h3>
-        <Badge variant={getStatusColor(crop.status)} className="capitalize">
+        <Badge className={`${getStatusColor(crop.status)} capitalize`}>
           {crop.status.replace(/_/g, ' ')}
         </Badge>
       </div>

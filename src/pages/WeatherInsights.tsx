@@ -194,8 +194,8 @@ const WeatherInsights = () => {
       if (!farmLocation.latitude || !farmLocation.longitude) {
         throw new Error('Invalid location coordinates');
       }
-      // Pass organizationId to fetch weather data
-      return await fetchWeatherData(organizationId || '');
+      // Pass latitude and longitude to fetch weather data
+      return await fetchWeatherData(farmLocation.latitude, farmLocation.longitude);
     },
     enabled: !!farmLocation && !locationError,
     retry: 2,
@@ -254,10 +254,22 @@ const WeatherInsights = () => {
     }
   }, [isWeatherError, weatherError, toast, handleConfigureLocation]);
 
-  return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+  // Show loading state while checking location
+  if (isLoadingLocation) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <p className="text-muted-foreground">Loading farm location...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show error state if location is not set
+  if (!farmLocation || locationError) {
+    return (
+      <div className="space-y-6">
         <div className="space-y-1">
           <h1 className="text-4xl font-bold bg-gradient-to-r from-blue-600 via-green-600 to-emerald-600 bg-clip-text text-transparent">
             Weather & Crop Insights
@@ -266,10 +278,77 @@ const WeatherInsights = () => {
             Advanced weather analytics and predictive farming intelligence
           </p>
         </div>
-        <Badge variant="secondary" className="bg-gradient-to-r from-blue-500/20 to-green-500/20 border-blue-500/30">
-          <CloudRain className="w-3 h-3 mr-1" />
-          Live Data
-        </Badge>
+        
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <MapPin className="h-5 w-5 text-amber-500" />
+              <CardTitle>Location Required</CardTitle>
+            </div>
+            <CardDescription>
+              To view weather insights, please set up your farm location first.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <p className="text-muted-foreground">
+                Weather data is specific to your farm's location. Please configure your farm location to access weather insights.
+              </p>
+              <Button onClick={handleConfigureLocation}>
+                <Settings className="mr-2 h-4 w-4" />
+                Configure Farm Location
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="space-y-1">
+          <h1 className="text-3xl sm:text-4xl font-bold bg-gradient-to-r from-blue-600 via-green-600 to-emerald-600 bg-clip-text text-transparent">
+            Weather & Crop Insights
+          </h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm sm:text-base text-muted-foreground">
+              <MapPin className="inline h-4 w-4 mr-1" />
+              {locationDisplayName}
+            </p>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="h-8 px-2 text-xs text-muted-foreground hover:text-foreground"
+              onClick={handleConfigureLocation}
+            >
+              <Settings className="h-3 w-3 mr-1" />
+              Change
+            </Button>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={() => handleRefresh(refetchWeather)}
+            disabled={isRefreshingWeather}
+            className="flex items-center gap-1"
+          >
+            {isRefreshingWeather ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <RefreshCw className="h-3 w-3" />
+            )}
+            <span>Refresh</span>
+          </Button>
+          <Badge variant="secondary" className="bg-gradient-to-r from-blue-500/20 to-green-500/20 border-blue-500/30">
+            <CloudRain className="w-3 h-3 mr-1" />
+            {isRefreshingWeather ? 'Updating...' : 'Live Data'}
+          </Badge>
+        </div>
       </div>
 
       <Tabs defaultValue="dashboard" className="space-y-4">
@@ -279,26 +358,47 @@ const WeatherInsights = () => {
               <CloudRain className="h-4 w-4" />
               <span className="whitespace-nowrap">Dashboard</span>
             </TabsTrigger>
-            <TabsTrigger value="predictive" className="flex items-center gap-2">
+            <TabsTrigger 
+              value="predictive" 
+              className="flex items-center gap-2"
+              disabled={!weatherData}
+            >
               <TrendingUp className="h-4 w-4" />
               <span className="whitespace-nowrap">Predictive Analysis</span>
             </TabsTrigger>
-            <TabsTrigger value="crop" className="flex items-center gap-2">
+            <TabsTrigger 
+              value="crop" 
+              className="flex items-center gap-2"
+              disabled={!weatherData}
+            >
               <Wheat className="h-4 w-4" />
               <span className="whitespace-nowrap">Crop Insights</span>
             </TabsTrigger>
-            <TabsTrigger value="alerts" className="flex items-center gap-2">
+            <TabsTrigger 
+              value="alerts" 
+              className="flex items-center gap-2"
+              disabled={!weatherData}
+            >
               <AlertTriangle className="h-4 w-4" />
               <span className="whitespace-nowrap">Alerts</span>
+              {weatherData?.alerts && weatherData.alerts.length > 0 && (
+                <span className="ml-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] text-white">
+                  {weatherData.alerts.length}
+                </span>
+              )}
             </TabsTrigger>
           </TabsList>
           
-          {weatherData && (
-            <div className="text-sm text-muted-foreground flex items-center gap-2">
-              <Calendar className="h-4 w-4" />
-              <span>Last updated: {new Date().toLocaleTimeString()}</span>
-            </div>
-          )}
+          <div className="text-sm text-muted-foreground flex items-center gap-2">
+            <Calendar className="h-4 w-4 flex-shrink-0" />
+            <span>
+              {isLoadingWeather 
+                ? 'Loading weather data...' 
+                : weatherData 
+                  ? `Updated: ${new Date().toLocaleTimeString()}`
+                  : 'Weather data not available'}
+            </span>
+          </div>
         </div>
 
         <TabsContent value="dashboard" className="space-y-4">

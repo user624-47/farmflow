@@ -1,8 +1,119 @@
-# Welcome to your Lovable project
+# AgroAssist Cloud
 
-## Project info
+A modern farm management platform with AI-powered insights for precision agriculture.
 
-**URL**: https://lovable.dev/projects/9e272b49-fd07-475c-b840-a2aebb291053
+## Features
+
+- Crop growth tracking and management
+- AI-powered growth stage analysis
+- Weather and environmental monitoring
+- Field mapping and geolocation
+- Image upload and analysis
+
+## Tech Stack
+
+- **Frontend**: React, TypeScript, Vite, Tailwind CSS
+- **Backend**: Node.js, Express, TypeScript
+- **Database**: Supabase (PostgreSQL)
+- **AI/ML**: OpenAI API
+- **Maps**: Mapbox GL JS
+- **Authentication**: Supabase Auth
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js 18+ and npm/yarn
+- Supabase account (https://supabase.com/)
+- Mapbox Access Token (https://account.mapbox.com/access-tokens/)
+- OpenAI API Key (optional, for AI features)
+
+### Environment Setup
+
+1. Copy the `.env.example` file to `.env` and update the values:
+   ```bash
+   cp .env.example .env
+   ```
+
+2. Update the following environment variables in the `.env` file:
+   - `VITE_API_URL`: URL of your API server (default: http://localhost:3001)
+   - `VITE_SUPABASE_URL`: Your Supabase project URL
+   - `VITE_SUPABASE_ANON_KEY`: Your Supabase anon/public key
+   - `SUPABASE_SERVICE_ROLE_KEY`: Your Supabase service role key (server-side only)
+   - `VITE_MAPBOX_ACCESS_TOKEN`: Your Mapbox access token
+   - `VITE_OPENAI_API_KEY`: (Optional) Your OpenAI API key for AI features
+
+## Development
+
+### Client Setup
+
+1. Install dependencies:
+   ```bash
+   npm install
+   # or
+   yarn
+   ```
+
+2. Start the development server:
+   ```bash
+   npm run dev
+   # or
+   yarn dev
+   ```
+
+3. Open [http://localhost:5173](http://localhost:5173) in your browser.
+
+### Server Setup
+
+1. Navigate to the server directory:
+   ```bash
+   cd server
+   ```
+
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
+
+3. Start the development server:
+   ```bash
+   npm run dev
+   ```
+
+4. The API server will be available at [http://localhost:3001](http://localhost:3001)
+
+## Project Structure
+
+```
+├── src/                    # Frontend source code
+│   ├── components/         # Reusable UI components
+│   ├── pages/              # Page components
+│   ├── services/           # API service functions
+│   ├── types/              # TypeScript type definitions
+│   └── ...
+├── server/                 # Backend server code
+│   ├── api/                # API route handlers
+│   ├── types/              # TypeScript type definitions
+│   └── index.ts            # Server entry point
+├── public/                 # Static files
+└── ...
+```
+
+## Deployment
+
+### Client
+
+The client can be deployed to any static hosting service (Vercel, Netlify, etc.) or served from a CDN.
+
+### Server
+
+The server should be deployed to a Node.js hosting service (Railway, Render, Heroku, etc.) with the appropriate environment variables set.
+
+## License
+
+MIT
+
+---
 
 ## How can I edit this code?
 

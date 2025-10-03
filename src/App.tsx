@@ -2,9 +2,10 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import { AuthProvider } from "@/contexts/AuthContext";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { AppLayout } from "@/components/layout/AppLayout";
+import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
@@ -14,9 +15,6 @@ import Loans from "./pages/Loans";
 import Crops from "./pages/Crops";
 import CropForm from "./pages/CropForm";
 import Livestock from "./pages/Livestock";
-// LivestockForm is now imported within the Livestock component
-// import LivestockForm from "./pages/LivestockForm";
-// Import will be handled by the Livestock component
 import Assistant from "./pages/Assistant";
 import WeatherInsights from "./pages/WeatherInsights";
 import Settings from "./pages/Settings";
@@ -28,6 +26,17 @@ import Applications from "./pages/Applications";
 import SetupOrganization from "./pages/SetupOrganization";
 import KnowledgeCenter from "./pages/KnowledgeCenter";
 
+// A wrapper component that applies the AppLayout to all protected routes
+import { Outlet } from 'react-router-dom';
+
+const ProtectedLayout = () => (
+  <ProtectedRoute>
+    <AppLayout>
+      <Outlet />
+    </AppLayout>
+  </ProtectedRoute>
+);
+
 const queryClient = new QueryClient();
 
 const App = () => (
@@ -37,10 +46,14 @@ const App = () => (
         <Toaster />
         <Sonner />
         <BrowserRouter>
-          <AppLayout>
-            <Routes>
+          <Routes>
+            {/* Public routes */}
+            <Route path="/auth" element={<Auth />} />
+            
+            {/* Protected routes */}
+            <Route element={<ProtectedLayout />}>
+              <Route index element={<Index />} />
               <Route path="/" element={<Index />} />
-              <Route path="/auth" element={<Auth />} />
               <Route path="/farmers" element={<Farmers />} />
               <Route path="/inputs" element={<Inputs />} />
               <Route path="/loans" element={<Loans />} />
@@ -56,13 +69,16 @@ const App = () => (
               <Route path="/extension-services" element={<ExtensionServices />} />
               <Route path="/financial-services" element={<FinancialServices />} />
               <Route path="/settings" element={<Settings />} />
-              <Route path="/setup-organization" element={<SetupOrganization />} />
+              <Route path="/setup-organization" element={
+                <ProtectedRoute requireOrganization={false}>
+                  <SetupOrganization />
+                </ProtectedRoute>
+              } />
               <Route path="/knowledge" element={<KnowledgeCenter />} />
               <Route path="/knowledge/*" element={<KnowledgeCenter />} />
-              {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />
-            </Routes>
-          </AppLayout>
+            </Route>
+          </Routes>
         </BrowserRouter>
       </TooltipProvider>
     </AuthProvider>

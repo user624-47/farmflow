@@ -1,50 +1,41 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { format, subMonths, isAfter, parseISO } from "date-fns";
+// UI Components
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Slider } from "@/components/ui/slider";
-import { Calendar, MapPin, Droplet, Thermometer, Sun, Calendar as CalendarIcon, Leaf, TrendingUp } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
-
-interface Crop {
-  id: string;
-  crop_name: string;
-  variety?: string;
-  status: string;
-  planting_date?: string;
-  expected_harvest_date?: string;
-  actual_harvest_date?: string;
-  farm_area?: number;
-  quantity_planted?: number;
-  quantity_harvested?: number;
-  unit?: string;
-  season?: string;
-  notes?: string;
-  image_url?: string;
-  created_at?: string;
-  farmer_id?: string;
-  farmer?: {
-    first_name: string;
-    last_name: string;
-    farmer_id: string;
-  };
-  organization_id?: string;
-  updated_at?: string;
-}
-
-interface FieldData {
-  id: string;
-  name: string;
-  area: number; // in hectares
-  cropType: string;
-  variety?: string;
-  plantingDate: string;
-  growthStage: string;
-  healthScore: number;
-  ndvi: number; // Normalized Difference Vegetation Index (0-1)
-  lastUpdated: string;
-}
+import { Skeleton } from "@/components/ui/skeleton";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+// Icons
+import { 
+  Calendar as CalendarIcon, 
+  CalendarDays, 
+  Clock, 
+  Crop as CropIcon, 
+  Droplet,
+  Droplets, 
+  Download,
+  FileText, 
+  Gauge, 
+  Leaf, 
+  Loader2, 
+  MapPin, 
+  RefreshCw, 
+  Ruler, 
+  Sun, 
+  Thermometer, 
+  Timer, 
+  TrendingUp, 
+  Wind 
+} from "lucide-react";
+// Charts
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+// Services
+import { getFieldSatelliteImage, getNDVITimeSeries } from "@/services/satelliteService";
+import { Crop, FieldData } from "@/features/precision-agriculture/types";
 
 interface WeatherData {
   temperature: number;
@@ -78,6 +69,11 @@ const mapCropToField = (crop: Crop): FieldData => {
     'diseased': 'vegetative'
   };
 
+  // Default coordinates (you might want to get these from your farm/crop data)
+  // These are example coordinates for a location in Kenya
+  const defaultLatitude = -1.2921; // Example: Nairobi, Kenya
+  const defaultLongitude = 36.8219;
+
   return {
     id: crop.id,
     name: crop.crop_name,
@@ -89,6 +85,9 @@ const mapCropToField = (crop: Crop): FieldData => {
     healthScore: 75, // Default health score
     ndvi: 0.6, // Default NDVI
     lastUpdated: crop.updated_at || new Date().toISOString(),
+    // Add coordinates for satellite imagery
+    latitude: crop.latitude || defaultLatitude,
+    longitude: crop.longitude || defaultLongitude,
   };
 };
 
@@ -136,26 +135,9 @@ interface CropGrowthMonitorProps {
 }
 
 const CropGrowthMonitor = ({ crops }: CropGrowthMonitorProps) => {
-  const [fields, setFields] = useState<FieldData[]>([]);
-  const [selectedField, setSelectedField] = useState<string>('');
-  const [dateRange, setDateRange] = useState<[number]>([30]); // days
-  const [activeTab, setActiveTab] = useState('overview');
-  const [satelliteImage] = useState('https://via.placeholder.com/800x400?text=Satellite+Image+of+Field');
-  
-  // Convert crops to fields when component mounts or crops change
-  useEffect(() => {
-    if (crops && crops.length > 0) {
-      const mappedFields = crops.map(mapCropToField);
-      setFields(mappedFields);
-      if (mappedFields.length > 0 && !selectedField) {
-        setSelectedField(mappedFields[0].id);
-      }
-    }
-  }, [crops]);
-  
   const defaultField: FieldData = {
     id: '',
-    name: 'No crop selected',
+    name: 'Select a crop',
     area: 0,
     cropType: 'N/A',
     variety: '',
@@ -166,9 +148,135 @@ const CropGrowthMonitor = ({ crops }: CropGrowthMonitorProps) => {
     lastUpdated: new Date().toISOString(),
   };
 
+  const [fields, setFields] = useState<FieldData[]>([]);
+  const [selectedField, setSelectedField] = useState<string>('');
+  const [dateRange, setDateRange] = useState<[number]>([30]); // days
+  const [activeTab, setActiveTab] = useState('overview');
+  const [satelliteImage, setSatelliteImage] = useState<string>('');
+  const [isLoadingImage, setIsLoadingImage] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+  const [ndviData, setNdviData] = useState<Array<{date: Date, ndvi: number}>>([]);
+  const [isLoadingNdvi, setIsLoadingNdvi] = useState(false);
+  
+  // Get current field or use default
   const currentField = fields.find(field => field.id === selectedField) || defaultField;
-  const currentStage = growthStages.find(stage => stage.id === currentField?.growthStage) || growthStages[0];
-  const growthProgress = currentField ? getGrowthStageProgress(currentField.growthStage) : 0;
+  const currentStage = growthStages.find(stage => stage.id === currentField.growthStage) || growthStages[0];
+  const growthProgress = getGrowthStageProgress(currentField.growthStage);
+
+  // Debug: Log environment variables and field data
+  useEffect(() => {
+    console.log('Environment Variables:', {
+      clientId: import.meta.env.VITE_SENTINEL_HUB_CLIENT_ID ? 'Set' : 'Not Set',
+      clientSecret: import.meta.env.VITE_SENTINEL_HUB_CLIENT_SECRET ? 'Set' : 'Not Set',
+      nodeEnv: import.meta.env.MODE
+    });
+    console.log('Current field data:', {
+      name: currentField.name,
+      latitude: currentField.latitude,
+      longitude: currentField.longitude,
+      hasCoordinates: !!(currentField.latitude && currentField.longitude)
+    });
+  }, [currentField]);
+  
+  // Load satellite data for the selected field and date
+  const loadSatelliteData = useCallback(async () => {
+    if (!selectedField || !selectedDate) {
+      console.log('No field selected or date not set');
+      return;
+    }
+
+    console.log('Loading satellite data for field:', currentField.name, 'at location:', currentField.latitude, currentField.longitude);
+    
+    try {
+      setIsLoadingImage(true);
+      setIsLoadingNdvi(true);
+
+      // Load satellite image
+      try {
+        console.log('Fetching satellite image...');
+        const imageUrl = await getFieldSatelliteImage(currentField, selectedDate);
+        console.log('Received satellite image URL:', imageUrl);
+        if (imageUrl) {
+          // Add timestamp to prevent caching issues
+          const timestamp = new Date().getTime();
+          const cacheBustingUrl = imageUrl.includes('?') 
+            ? `${imageUrl}&t=${timestamp}` 
+            : `${imageUrl}?t=${timestamp}`;
+          
+          console.log('Setting image URL with cache busting:', cacheBustingUrl);
+          setSatelliteImage(cacheBustingUrl);
+        } else {
+          console.warn('No image URL returned from getFieldSatelliteImage');
+          setSatelliteImage(`https://via.placeholder.com/1024x1024.png?text=No+Image+for+${encodeURIComponent(currentField.name)}`);
+        }
+      } catch (imageError) {
+        console.error('Error loading satellite image:', imageError);
+        setSatelliteImage(`https://via.placeholder.com/1024x1024.png?text=Image+Error+for+${encodeURIComponent(currentField.name)}`);
+      }
+
+      // Load NDVI time series data (last 30 days)
+      try {
+        const endDate = new Date(selectedDate);
+        const startDate = subMonths(endDate, 1);
+        console.log('Fetching NDVI data from', startDate, 'to', endDate);
+        const ndviData = await getNDVITimeSeries(currentField, startDate, endDate);
+        console.log('Received NDVI data points:', ndviData.length);
+        setNdviData(ndviData);
+      } catch (ndviError) {
+        console.error('Error loading NDVI data:', ndviError);
+        // Fallback to mock data
+        console.log('Falling back to mock NDVI data');
+        setNdviData(generateMockNDVIData(subMonths(selectedDate, 1), selectedDate));
+      }
+    } catch (error) {
+      console.error('Unexpected error in loadSatelliteData:', error);
+    } finally {
+      setIsLoadingImage(false);
+      setIsLoadingNdvi(false);
+    }
+  }, [currentField, selectedDate]);
+
+  // Load satellite data when field or date changes
+  useEffect(() => {
+    loadSatelliteData();
+  }, [loadSatelliteData]);
+
+  // Generate mock NDVI data for development
+  const generateMockNDVIData = useCallback((startDate: Date, endDate: Date) => {
+    const data = [];
+    const currentDate = new Date(startDate);
+    
+    while (currentDate <= endDate) {
+      // Generate random NDVI value between 0.2 and 0.9
+      const ndvi = 0.2 + Math.random() * 0.7;
+      data.push({
+        date: new Date(currentDate),
+        ndvi: parseFloat(ndvi.toFixed(2))
+      });
+      
+      // Move to next day
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+    
+    return data;
+  }, []);
+
+  // Convert crops to fields when component mounts or crops change
+  useEffect(() => {
+    if (crops && crops.length > 0) {
+      const mappedFields = crops.map(mapCropToField);
+      setFields(mappedFields);
+      if (mappedFields.length > 0 && !selectedField) {
+        setSelectedField(mappedFields[0].id);
+      }
+    }
+  }, [crops, selectedField]);
+  
+  // Ensure we have a valid growth progress value
+  const currentGrowthProgress = currentField ? getGrowthStageProgress(currentField.growthStage) : 0;
+  
+  // Add missing Download icon to the imports
+  const DownloadIcon = Download;
   
   if (fields.length === 0) {
     return (
@@ -181,7 +289,7 @@ const CropGrowthMonitor = ({ crops }: CropGrowthMonitorProps) => {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 p-4">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h2 className="text-2xl font-semibold">Crop Growth Monitoring</h2>
@@ -416,23 +524,61 @@ const CropGrowthMonitor = ({ crops }: CropGrowthMonitorProps) => {
           </Card>
         </TabsContent>
         
-        <TabsContent value="satellite">
+        <TabsContent value="satellite" className="space-y-4">
           <Card>
-            <CardHeader>
-              <CardTitle>Satellite Imagery</CardTitle>
-              <CardDescription>
-                {new Date().toLocaleDateString()} • {currentField.name}
-              </CardDescription>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <CardTitle>Satellite Imagery</CardTitle>
+                <CardDescription>
+                  {format(selectedDate, 'MMMM d, yyyy')} • {currentField.name}
+                </CardDescription>
+              </div>
+              <div className="flex items-center gap-2">
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm" className="gap-2">
+                      <CalendarIcon className="h-4 w-4" />
+                      {format(selectedDate, 'MMM d, yyyy')}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0">
+                    <Calendar
+                      mode="single"
+                      selected={selectedDate}
+                      onSelect={(date) => date && setSelectedDate(date)}
+                      disabled={(date) => isAfter(date, new Date())}
+                      className="rounded-md border"
+                    />
+                  </PopoverContent>
+                </Popover>
+                <Button 
+                  variant="outline" 
+                  size="icon" 
+                  onClick={() => loadSatelliteData()}
+                  disabled={isLoadingImage}
+                >
+                  <RefreshCw className={`h-4 w-4 ${isLoadingImage ? 'animate-spin' : ''}`} />
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               <div className="relative w-full h-96 bg-muted rounded-lg overflow-hidden">
-                <img
-                  src={satelliteImage}
-                  alt="Satellite view of field"
-                  className="w-full h-full object-cover"
-                />
+                {isLoadingImage ? (
+                  <div className="w-full h-full flex items-center justify-center">
+                    <div className="flex flex-col items-center gap-2">
+                      <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                      <p className="text-sm text-muted-foreground">Loading satellite image...</p>
+                    </div>
+                  </div>
+                ) : (
+                  <img
+                    src={satelliteImage}
+                    alt={`Satellite view of ${currentField.name}`}
+                    className="w-full h-full object-cover"
+                  />
+                )}
                 <div className="absolute bottom-4 left-4 right-4 bg-background/80 backdrop-blur-sm p-4 rounded-lg">
-                  <div className="flex flex-wrap gap-4">
+                  <div className="flex flex-wrap gap-4 items-center">
                     <div>
                       <h3 className="text-xs font-medium text-muted-foreground">NDVI</h3>
                       <div className="flex items-center gap-2">
@@ -450,86 +596,128 @@ const CropGrowthMonitor = ({ crops }: CropGrowthMonitorProps) => {
                         <span>{currentField.healthScore}/100</span>
                       </div>
                     </div>
-                    <div>
-                      <h3 className="text-xs font-medium text-muted-foreground">Last Updated</h3>
-                      <div className="text-sm">
-                        {new Date(currentField.lastUpdated).toLocaleString()}
-                      </div>
+                    <div className="ml-auto">
+                      <Button variant="outline" size="sm" className="gap-2">
+                        <Download className="h-4 w-4" />
+                        Export
+                      </Button>
                     </div>
                   </div>
                 </div>
-                <div className="absolute top-4 right-4 flex gap-2">
-                  <Button variant="outline" size="sm" className="bg-background/80 backdrop-blur-sm">
-                    <Calendar className="h-4 w-4 mr-2" />
-                    Time Series
-                  </Button>
-                  <Button variant="outline" size="sm" className="bg-background/80 backdrop-blur-sm">
-                    <TrendingUp className="h-4 w-4 mr-2" />
-                    Compare
-                  </Button>
-                </div>
-              </div>
-              
-              <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="p-3 border rounded-lg">
-                  <h3 className="text-xs font-medium text-muted-foreground">NDVI</h3>
-                  <div className="flex items-end gap-1 mt-1">
-                    <span className="text-2xl font-bold">{currentField.ndvi.toFixed(2)}</span>
-                    <span className="text-sm text-green-500 mb-0.5">+0.05</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {getNDVIDescription(currentField.ndvi)}
-                  </p>
-                </div>
-                <div className="p-3 border rounded-lg">
-                  <h3 className="text-xs font-medium text-muted-foreground">Health</h3>
-                  <div className="flex items-end gap-1 mt-1">
-                    <span className="text-2xl font-bold">{currentField.healthScore}</span>
-                    <span className="text-sm text-green-500 mb-0.5">+5%</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {currentField.healthScore > 70 ? 'Good' : 
-                     currentField.healthScore > 40 ? 'Moderate' : 'Needs attention'}
-                  </p>
-                </div>
-                <div className="p-3 border rounded-lg">
-                  <h3 className="text-xs font-medium text-muted-foreground">Growth Stage</h3>
-                  <div className="mt-1">
-                    <span className="text-2xl font-bold">{currentStage.name}</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {Math.round(growthProgress)}% complete
-                  </p>
-                </div>
-                <div className="p-3 border rounded-lg">
-                  <h3 className="text-xs font-medium text-muted-foreground">Area</h3>
-                  <div className="mt-1">
-                    <span className="text-2xl font-bold">{currentField.area}</span>
-                    <span className="text-muted-foreground ml-1">ha</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {currentField.cropType}
-                  </p>
-                </div>
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
-        
-        <TabsContent value="analytics">
+
           <Card>
             <CardHeader>
-              <CardTitle>Analytics</CardTitle>
-              <CardDescription>Detailed analysis and insights</CardDescription>
+              <CardTitle>NDVI Trend</CardTitle>
+              <CardDescription>Vegetation health over the last 3 months</CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="h-64 flex items-center justify-center bg-muted rounded-lg">
-                <p className="text-muted-foreground">Analytics dashboard coming soon</p>
-              </div>
+            <CardContent className="h-80">
+              {isLoadingNdvi ? (
+                <div className="w-full h-full flex items-center justify-center">
+                  <div className="flex flex-col items-center gap-2">
+                    <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                    <p className="text-sm text-muted-foreground">Loading NDVI data...</p>
+                  </div>
+                </div>
+              ) : ndviData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={ndviData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+                    <XAxis 
+                      dataKey="date" 
+                      tickFormatter={(date) => format(new Date(date), 'MMM d')} 
+                    />
+                    <YAxis domain={[0, 1]} />
+                    <Tooltip 
+                      labelFormatter={(value) => format(new Date(value), 'MMMM d, yyyy')}
+                      formatter={(value) => [Number(value).toFixed(2), 'NDVI']}
+                    />
+                    <Legend />
+                    <Line 
+                      type="monotone" 
+                      dataKey="ndvi" 
+                      name="NDVI" 
+                      stroke="#10b981" 
+                      strokeWidth={2} 
+                      dot={false}
+                      activeDot={{ r: 6 }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full flex items-center justify-center text-muted-foreground">
+                  No NDVI data available for this period
+                </div>
+              )}
             </CardContent>
           </Card>
+
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="outline" size="sm" className="gap-2">
+              <Calendar className="h-4 w-4" />
+              Time Series
+            </Button>
+            <Button variant="outline" size="sm" className="gap-2">
+              <TrendingUp className="h-4 w-4" />
+              Compare
+            </Button>
+          </div>
         </TabsContent>
+
+        {/* Add other tabs content here if needed */}
+        
       </Tabs>
+      
+      <div className="mt-8">
+        <h2 className="text-xl font-semibold mb-4">Field Overview</h2>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="p-4 border rounded-lg bg-card">
+            <h3 className="text-sm font-medium text-muted-foreground">NDVI</h3>
+            <div className="flex items-end gap-1 mt-1">
+              <span className="text-2xl font-bold">{currentField.ndvi.toFixed(2)}</span>
+              <span className="text-sm text-green-500 mb-0.5">+0.05</span>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {getNDVIDescription(currentField.ndvi)}
+            </p>
+          </div>
+          
+          <div className="p-4 border rounded-lg bg-card">
+            <h3 className="text-sm font-medium text-muted-foreground">Health</h3>
+            <div className="flex items-end gap-1 mt-1">
+              <span className="text-2xl font-bold">{currentField.healthScore}</span>
+              <span className="text-sm text-green-500 mb-0.5">+5%</span>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {currentField.healthScore > 70 ? 'Good' : 
+               currentField.healthScore > 40 ? 'Moderate' : 'Needs attention'}
+            </p>
+          </div>
+          
+          <div className="p-4 border rounded-lg bg-card">
+            <h3 className="text-sm font-medium text-muted-foreground">Growth Stage</h3>
+            <div className="mt-1">
+              <span className="text-2xl font-bold">{currentStage.name}</span>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {Math.round(growthProgress)}% complete
+            </p>
+          </div>
+          
+          <div className="p-4 border rounded-lg bg-card">
+            <h3 className="text-sm font-medium text-muted-foreground">Area</h3>
+            <div className="mt-1">
+              <span className="text-2xl font-bold">{currentField.area}</span>
+              <span className="text-muted-foreground ml-1">ha</span>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {currentField.cropType}
+            </p>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };
