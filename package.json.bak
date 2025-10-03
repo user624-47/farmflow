@@ -117,4 +117,3 @@
     "start": "vite & tsx server/index.ts",
     "start:dev": "concurrently \"vite\" \"tsx watch server/index.ts\""
   }
-}
